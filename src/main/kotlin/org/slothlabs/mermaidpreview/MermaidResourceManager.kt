@@ -4,7 +4,6 @@ import com.intellij.openapi.components.Service
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
-import kotlin.io.path.exists
 
 /**
  * Extracts bundled resources (mermaid.min.js, preview.html) into a temp directory on first use,
@@ -23,13 +22,12 @@ class MermaidResourceManager {
     fun previewHtmlUrl(): String = "file://${extractDir.resolve("preview.html").toAbsolutePath()}"
 
     private fun copy(classpath: String, target: Path) {
-        if (target.exists()) return
         MermaidResourceManager::class.java.getResourceAsStream(classpath)?.use { input ->
             Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING)
         } ?: error("Bundled resource not found in plugin jar: $classpath")
     }
 
     companion object {
-        const val VERSION = "0.1.0"
+        const val VERSION = "0.1.1"
     }
 }

@@ -28,9 +28,31 @@ Part of the **SlothLabs** family: CloudOrbit · DataOrbit · BastionOrbit · Pro
 - Detects every <code>```mermaid … ```</code> fenced block in the `.md` / `.markdown` / `.mdx` file you have open.
 - Renders each block as a card in a side tool window with a header (`Block #N · line X`).
 - Per-block segmented toggle: **Diagram ↔ Code**.
+- Per-block actions: **Download SVG · Download PNG · Copy source**.
+- **Actionable error overlay** — parse errors show the mermaid message and highlight the offending line in the source, instead of the generic "💣 Syntax error in text".
 - Live-refreshes on file switch and as you edit (250ms debounce).
 - Follows the IDE's dark/light theme.
 - **No network.** Mermaid 10.9.3 is bundled inside the plugin — works offline, air-gapped, everywhere.
+
+## Screenshots
+
+Flowcharts · sequence diagrams · state diagrams, all live-rendered:
+
+![overview — flowchart, sequence, state](docs/01-overview-flowchart-sequence-state.png)
+
+Gantt · pie · git graph — one panel, one tool window:
+
+![gantt, pie, git graph](docs/02-gantt-pie-gitgraph.png)
+
+Actionable errors — parse failures highlight the offending line and show mermaid's own message, no generic bomb icon:
+
+![error overlay close-up](docs/04-error-closeup.png)
+
+Mindmap plus the error overlay in context:
+
+![mindmap + error](docs/03-mindmap-quadrant-with-error.png)
+
+See [docs/demo-diagrams.md](docs/demo-diagrams.md) for 12 example diagrams covering every supported Mermaid type. Open it with the plugin installed to reproduce these screenshots.
 
 ## Install
 
@@ -51,10 +73,6 @@ cd mermaid-preview-plugin
 ```
 
 Requires: JDK 17, ~2GB RAM for the Gradle build, a JetBrains IDE 2023.3 or newer running a JBR with JCEF.
-
-## Screenshots
-
-*coming in v0.2 — the plugin renders; screenshots are being captured.*
 
 ## Supported IDEs
 

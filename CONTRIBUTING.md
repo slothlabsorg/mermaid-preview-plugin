@@ -68,14 +68,19 @@ Status legend: `[ ]` = open · `[~]` = in progress · `[x]` = done in `main`.
 - [x] Bundled mermaid.js (offline)
 - [x] Graceful fallback if JCEF is disabled
 
-### v0.2 — quality of life
+### v0.1.1 — quality of life 🚀 (just shipped)
 
-- [ ] Export per-block: **Download SVG** / **Download PNG** buttons in the card header
-- [ ] Copy-to-clipboard button for block source
+- [x] Export per-block: **Download SVG** / **Download PNG** buttons in the card header
+- [x] Copy-to-clipboard button for block source
+- [x] Actionable error overlay (highlights offending line, shows mermaid parser message)
+- [x] Screenshots in the README
+
+### v0.2 — quality of life (next)
+
 - [ ] Click on the card header to jump to that line in the editor
-- [ ] Screenshots + short demo GIF in the README
 - [ ] Unit tests for `MermaidBlockExtractor` (happy, nested, mismatched-fence, CRLF)
 - [ ] Preserve scroll position across refreshes
+- [ ] Short demo GIF in the README
 
 ### v0.3 — editor integration
 

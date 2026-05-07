@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>org.slothlabs.mermaid-preview</id>
     <name>Mermaid Preview</name>
-    <version>0.1.0</version>
+    <version>0.1.1</version>
     <vendor email="friends@slothlabs.org" url="https://github.com/slothlabsorg">SlothLabs</vendor>
 
     <description><![CDATA[

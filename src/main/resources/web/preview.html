@@ -93,6 +93,29 @@
   .toggle button:hover:not(.active) {
     color: var(--text);
   }
+  .actions {
+    display: inline-flex;
+    gap: 4px;
+    margin-left: 8px;
+  }
+  .actions button {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font: inherit;
+    font-size: 11px;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .actions button:hover {
+    color: var(--text);
+    border-color: var(--accent);
+  }
+  .actions button:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
   .card-body {
     padding: 12px;
     overflow: auto;
@@ -127,9 +150,32 @@
     color: #f28b82;
     font-family: var(--mono);
     font-size: 11px;
-    padding: 12px;
-    background: rgba(242, 139, 130, 0.1);
+    padding: 10px 12px;
+    background: rgba(242, 139, 130, 0.12);
+    border-left: 3px solid #f28b82;
     border-radius: 4px;
+    margin-bottom: 10px;
+  }
+  .error strong { color: #f28b82; }
+  .err-msg { color: var(--text-dim); white-space: pre-wrap; font-size: 11px; display: block; margin-top: 4px; }
+  .card-body pre .line { display: block; }
+  .card-body pre .ln {
+    display: inline-block;
+    width: 3ch;
+    padding-right: 10px;
+    color: var(--text-dim);
+    user-select: none;
+    text-align: right;
+  }
+  .card-body pre .err-line {
+    background: rgba(242, 139, 130, 0.18);
+    border-left: 3px solid #f28b82;
+    margin-left: -3px;
+    padding-left: 0;
+  }
+  .card-body pre .err-line .ln {
+    color: #f28b82;
+    font-weight: bold;
   }
 </style>
 </head>
@@ -184,9 +230,16 @@
     card.innerHTML = `
       <div class="card-header">
         <div class="card-title">Block <strong>#${block.index + 1}</strong> · line ${block.startLine}</div>
-        <div class="toggle">
-          <button data-view="diagram" class="${view === "diagram" ? "active" : ""}">Diagram</button>
-          <button data-view="code" class="${view === "code" ? "active" : ""}">Code</button>
+        <div style="display:flex;align-items:center;">
+          <div class="toggle">
+            <button data-view="diagram" class="${view === "diagram" ? "active" : ""}">Diagram</button>
+            <button data-view="code" class="${view === "code" ? "active" : ""}">Code</button>
+          </div>
+          <div class="actions">
+            <button data-export="svg" title="Download as SVG">SVG</button>
+            <button data-export="png" title="Download as PNG">PNG</button>
+            <button data-export="copy" title="Copy mermaid source">Copy</button>
+          </div>
         </div>
       </div>
       <div class="card-body ${view}"></div>
@@ -203,27 +256,159 @@
       });
     }
 
+    for (const btn of card.querySelectorAll(".actions button")) {
+      btn.addEventListener("click", () => onExport(card, block, btn));
+    }
+
     drawBody(card.querySelector(".card-body"), block, view);
     return card;
   }
 
-  function drawBody(bodyEl, block, view) {
+  async function onExport(card, block, btn) {
+    const kind = btn.dataset.export;
+    if (kind === "copy") {
+      try {
+        await navigator.clipboard.writeText(block.code);
+        flash(btn, "Copied!");
+      } catch (e) {
+        flash(btn, "Failed");
+      }
+      return;
+    }
+
+    // Need an SVG — render off-screen if current view is Code / has parseError
+    const svgString = await renderSvgForExport(block);
+    if (!svgString) {
+      flash(btn, "Fix errors");
+      return;
+    }
+
+    const safeName = `block-${block.index + 1}-line-${block.startLine}`;
+    if (kind === "svg") {
+      downloadBlob(new Blob([svgString], { type: "image/svg+xml" }), `${safeName}.svg`);
+      flash(btn, "SVG ↓");
+    } else if (kind === "png") {
+      const png = await svgToPng(svgString);
+      if (png) {
+        downloadBlob(png, `${safeName}.png`);
+        flash(btn, "PNG ↓");
+      } else {
+        flash(btn, "PNG failed");
+      }
+    }
+  }
+
+  async function renderSvgForExport(block) {
+    try {
+      await mermaid.parse(block.code);
+    } catch (e) { return null; }
+    try {
+      const id = `export-${Date.now()}-${block.index}`;
+      const { svg } = await mermaid.render(id, block.code);
+      return svg;
+    } catch (e) { return null; }
+  }
+
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function svgToPng(svgString) {
+    return new Promise(resolve => {
+      const img = new Image();
+      const svgBlob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
+      const url = URL.createObjectURL(svgBlob);
+      img.onload = () => {
+        const scale = 2; // 2x for crispness
+        const canvas = document.createElement("canvas");
+        canvas.width = (img.width || 800) * scale;
+        canvas.height = (img.height || 600) * scale;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = getComputedStyle(document.body).backgroundColor || "white";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.setTransform(scale, 0, 0, scale, 0, 0);
+        ctx.drawImage(img, 0, 0);
+        URL.revokeObjectURL(url);
+        canvas.toBlob(b => resolve(b), "image/png");
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+      img.src = url;
+    });
+  }
+
+  function flash(btn, text) {
+    const prev = btn.textContent;
+    btn.textContent = text;
+    btn.disabled = true;
+    setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 1200);
+  }
+
+  async function drawBody(bodyEl, block, view) {
     bodyEl.innerHTML = "";
+    const parseError = await parseError_(block.code);
+
+    if (parseError) {
+      renderErrorWithSource(bodyEl, block, parseError);
+      return;
+    }
+
     if (view === "code") {
-      const pre = document.createElement("pre");
-      pre.textContent = block.code;
-      bodyEl.appendChild(pre);
+      renderCodeView(bodyEl, block, null);
     } else {
       const id = `mermaid-${Date.now()}-${block.index}`;
-      mermaid.render(id, block.code).then(({ svg }) => {
+      try {
+        const { svg } = await mermaid.render(id, block.code);
         bodyEl.innerHTML = svg;
-      }).catch(err => {
-        const box = document.createElement("div");
-        box.className = "error";
-        box.textContent = "mermaid error: " + (err && err.message || String(err));
-        bodyEl.appendChild(box);
-      });
+      } catch (err) {
+        renderErrorWithSource(bodyEl, block, err);
+      }
     }
+  }
+
+  async function parseError_(code) {
+    try {
+      await mermaid.parse(code);
+      return null;
+    } catch (e) {
+      return e;
+    }
+  }
+
+  function renderCodeView(bodyEl, block, errLineNumber) {
+    const pre = document.createElement("pre");
+    const lines = block.code.split("\n");
+    pre.innerHTML = lines.map((line, i) => {
+      const lineNo = i + 1;
+      const esc = escapeHtml(line);
+      const highlight = errLineNumber === lineNo;
+      return `<span class="line${highlight ? " err-line" : ""}"><span class="ln">${String(lineNo).padStart(3, " ")}</span>${esc}</span>`;
+    }).join("\n");
+    bodyEl.appendChild(pre);
+  }
+
+  function renderErrorWithSource(bodyEl, block, err) {
+    const message = String(err && (err.str || err.message) || err);
+    const lineNo = extractLineNumber(message);
+
+    const header = document.createElement("div");
+    header.className = "error";
+    header.innerHTML = `<strong>Syntax error</strong>${lineNo ? ` at line <strong>${lineNo}</strong> of block` : ""}<br><span class="err-msg">${escapeHtml(message)}</span>`;
+    bodyEl.appendChild(header);
+
+    renderCodeView(bodyEl, block, lineNo);
+  }
+
+  function extractLineNumber(message) {
+    // mermaid errors look like "Parse error on line 7:" or "...at line 5..."
+    const m = message.match(/line\s+(\d+)/i);
+    return m ? parseInt(m[1], 10) : null;
   }
 
   function escapeHtml(s) {
