@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mermaid Preview</title>
+<style>
+  :root {
+    --bg: #1e1f22;
+    --surface: #2b2d30;
+    --surface-hi: #36383c;
+    --border: #3b3d40;
+    --text: #dfe1e5;
+    --text-dim: #9ca0a4;
+    --accent: #6e87ff;
+    --mono: ui-monospace, SFMono-Regular, Menlo, "JetBrains Mono", monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f7f8fa;
+      --surface: #ffffff;
+      --surface-hi: #eef0f3;
+      --border: #d7dbe0;
+      --text: #1e1f22;
+      --text-dim: #5a5f66;
+    }
+  }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 13px;
+  }
+  #status {
+    padding: 10px 14px;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 10;
+  }
+  #status strong {
+    color: var(--text);
+  }
+  #blocks {
+    padding: 12px;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 12px;
+    overflow: hidden;
+  }
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: var(--surface-hi);
+    border-bottom: 1px solid var(--border);
+  }
+  .card-title {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .card-title strong {
+    color: var(--text);
+  }
+  .toggle {
+    display: inline-flex;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    font-size: 11px;
+  }
+  .toggle button {
+    background: transparent;
+    color: var(--text-dim);
+    border: none;
+    padding: 4px 10px;
+    cursor: pointer;
+    font: inherit;
+  }
+  .toggle button.active {
+    background: var(--accent);
+    color: white;
+  }
+  .toggle button:hover:not(.active) {
+    color: var(--text);
+  }
+  .card-body {
+    padding: 12px;
+    overflow: auto;
+  }
+  .card-body pre {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 12px;
+    white-space: pre;
+    color: var(--text);
+  }
+  .card-body.diagram {
+    display: flex;
+    justify-content: center;
+    background: var(--surface);
+  }
+  .card-body.diagram svg {
+    max-width: 100%;
+    height: auto;
+  }
+  .empty {
+    padding: 40px 14px;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+  .empty svg {
+    opacity: 0.4;
+    margin-bottom: 10px;
+  }
+  .error {
+    color: #f28b82;
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 12px;
+    background: rgba(242, 139, 130, 0.1);
+    border-radius: 4px;
+  }
+</style>
+</head>
+<body>
+<div id="status">Waiting for Markdown file…</div>
+<div id="blocks"></div>
+
+<script src="./mermaid.min.js"></script>
+<script>
+  const isDark = !window.matchMedia("(prefers-color-scheme: light)").matches;
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: isDark ? "dark" : "default",
+    securityLevel: "loose",
+    flowchart: { htmlLabels: true },
+  });
+
+  let currentBlocks = [];
+  const viewState = new Map(); // blockIndex -> 'diagram' | 'code'
+
+  window.setPayload = function(payload) {
+    const status = document.getElementById("status");
+    const container = document.getElementById("blocks");
+    container.innerHTML = "";
+
+    if (payload.status === "no-file") {
+      status.innerHTML = "Open a Markdown file to preview its Mermaid blocks.";
+      return;
+    }
+    if (payload.status === "not-markdown") {
+      status.innerHTML = `<strong>${escapeHtml(payload.fileName)}</strong> is not a Markdown file.`;
+      return;
+    }
+    const n = payload.blocks.length;
+    status.innerHTML = n === 0
+      ? `<strong>${escapeHtml(payload.fileName)}</strong> — no mermaid blocks.`
+      : `<strong>${escapeHtml(payload.fileName)}</strong> — ${n} mermaid block${n === 1 ? "" : "s"}.`;
+
+    currentBlocks = payload.blocks;
+    for (const block of payload.blocks) {
+      container.appendChild(renderCard(block));
+    }
+  };
+
+  function renderCard(block) {
+    const card = document.createElement("div");
+    card.className = "card";
+    card.dataset.index = String(block.index);
+
+    const view = viewState.get(block.index) || "diagram";
+
+    card.innerHTML = `
+      <div class="card-header">
+        <div class="card-title">Block <strong>#${block.index + 1}</strong> · line ${block.startLine}</div>
+        <div class="toggle">
+          <button data-view="diagram" class="${view === "diagram" ? "active" : ""}">Diagram</button>
+          <button data-view="code" class="${view === "code" ? "active" : ""}">Code</button>
+        </div>
+      </div>
+      <div class="card-body ${view}"></div>
+    `;
+
+    for (const btn of card.querySelectorAll(".toggle button")) {
+      btn.addEventListener("click", () => {
+        const next = btn.dataset.view;
+        viewState.set(block.index, next);
+        for (const b of card.querySelectorAll(".toggle button")) b.classList.toggle("active", b === btn);
+        const body = card.querySelector(".card-body");
+        body.className = "card-body " + next;
+        drawBody(body, block, next);
+      });
+    }
+
+    drawBody(card.querySelector(".card-body"), block, view);
+    return card;
+  }
+
+  function drawBody(bodyEl, block, view) {
+    bodyEl.innerHTML = "";
+    if (view === "code") {
+      const pre = document.createElement("pre");
+      pre.textContent = block.code;
+      bodyEl.appendChild(pre);
+    } else {
+      const id = `mermaid-${Date.now()}-${block.index}`;
+      mermaid.render(id, block.code).then(({ svg }) => {
+        bodyEl.innerHTML = svg;
+      }).catch(err => {
+        const box = document.createElement("div");
+        box.className = "error";
+        box.textContent = "mermaid error: " + (err && err.message || String(err));
+        bodyEl.appendChild(box);
+      });
+    }
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+<idea-plugin>
+    <id>org.slothlabs.mermaid-preview</id>
+    <name>Mermaid Preview</name>
+    <version>0.1.0</version>
+    <vendor email="friends@slothlabs.org" url="https://github.com/slothlabsorg">SlothLabs</vendor>
+
+    <description><![CDATA[
+        Renders Mermaid diagrams embedded in Markdown files in a side tool window,
+        with a per-block toggle between source code and rendered diagram.
+        Uses a bundled mermaid.js (no network required) running inside JCEF.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>org.intellij.plugins.markdown</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow
+            id="Mermaid"
+            anchor="right"
+            factoryClass="org.slothlabs.mermaidpreview.MermaidToolWindowFactory"
+            icon="AllIcons.FileTypes.Diagram"/>
+    </extensions>
+</idea-plugin>

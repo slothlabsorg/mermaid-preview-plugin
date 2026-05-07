@@ -1,0 +1,53 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: corretto
+          java-version: 17
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build plugin
+        run: ./gradlew buildPlugin --stacktrace
+
+      - name: Resolve artifact
+        id: artifact
+        run: |
+          ZIP=$(ls build/distributions/*.zip | head -1)
+          echo "path=$ZIP" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename $ZIP)" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: ${{ steps.artifact.outputs.path }}
+          body: |
+            ## Installation
+
+            1. Download `${{ steps.artifact.outputs.name }}` below.
+            2. In IntelliJ / any JetBrains IDE: `Settings → Plugins → ⚙ → Install Plugin from Disk…`
+            3. Pick the downloaded zip and restart the IDE.
+            4. Open any `.md` file with `\`\`\`mermaid\`\`\`` blocks → click the **Mermaid** icon on the right sidebar.
+
+            See the changelog below for what's new.
