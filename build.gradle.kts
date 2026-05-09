@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "org.slothlabs"
-version = "0.1.1"
+version = "0.1.2"
 
 repositories {
     mavenCentral()
@@ -21,6 +21,7 @@ dependencies {
         create(IntelliJPlatformType.IntellijIdeaCommunity, "2024.1")
         bundledPlugin("org.intellij.plugins.markdown")
         instrumentationTools()
+        pluginVerifier()
     }
 }
 
@@ -29,6 +30,14 @@ intellijPlatform {
         ideaVersion {
             sinceBuild = "233"
             untilBuild = provider { null }
+        }
+    }
+
+    pluginVerification {
+        ides {
+            ide(IntelliJPlatformType.IntellijIdeaCommunity, "2024.1")
+            ide(IntelliJPlatformType.IntellijIdeaCommunity, "2024.2")
+            ide(IntelliJPlatformType.IntellijIdeaCommunity, "2024.3")
         }
     }
 }

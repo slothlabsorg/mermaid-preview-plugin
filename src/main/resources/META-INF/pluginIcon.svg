@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40" fill="none">
+  <!-- Mermaid-coral brand color; two nodes connected by an arrow = essence of a diagram -->
+  <rect x="3" y="6" width="14" height="10" rx="3" fill="#FF3670"/>
+  <rect x="23" y="24" width="14" height="10" rx="3" fill="#FF3670"/>
+  <path d="M10 17 Q 10 24 20 24 Q 30 24 30 24" stroke="#FF3670" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+  <polygon points="22,20 30,24 22,28" fill="#FF3670"/>
+</svg>

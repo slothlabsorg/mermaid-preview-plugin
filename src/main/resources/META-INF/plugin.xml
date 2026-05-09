@@ -1,14 +1,65 @@
 <idea-plugin>
     <id>org.slothlabs.mermaid-preview</id>
     <name>Mermaid Preview</name>
-    <version>0.1.1</version>
+    <version>0.1.2</version>
     <vendor email="friends@slothlabs.org" url="https://github.com/slothlabsorg">SlothLabs</vendor>
 
     <description><![CDATA[
-        Renders Mermaid diagrams embedded in Markdown files in a side tool window,
-        with a per-block toggle between source code and rendered diagram.
-        Uses a bundled mermaid.js (no network required) running inside JCEF.
+<h2>Mermaid diagrams, rendered live inside your Markdown files</h2>
+
+<p>Open any <code>.md</code>, <code>.markdown</code>, or <code>.mdx</code> file and every fenced <code>mermaid</code> block
+appears rendered in a side tool window — with a per-block toggle to flip between the source code and the rendered diagram.</p>
+
+<h3>Features</h3>
+<ul>
+  <li><b>Auto-detect every <code>```mermaid</code> block</b> in the file you have open.</li>
+  <li><b>Per-block toggle:</b> Diagram ↔ Code — inspect the source without leaving the panel.</li>
+  <li><b>Export:</b> download each diagram as SVG or PNG, copy the source to the clipboard.</li>
+  <li><b>Actionable error overlay:</b> syntax errors show the mermaid parser message and highlight the offending line.
+      No more generic "💣 Syntax error in text".</li>
+  <li><b>Live refresh</b> on file switch and as you type (250 ms debounce).</li>
+  <li><b>Dark / light theme</b> follows your IDE preference.</li>
+  <li><b>100% offline</b> — mermaid 10.9.3 is bundled inside the plugin jar. No network calls, ever.</li>
+</ul>
+
+<h3>Supported diagram types</h3>
+<p>Everything mermaid 10.x supports: flowcharts, sequence diagrams, state diagrams, class diagrams, ER diagrams,
+gantt charts, pie charts, git graphs, user journeys, mindmaps, quadrant charts, and timelines.</p>
+
+<h3>Supported IDEs</h3>
+<p>Any JetBrains IDE on the IntelliJ Platform 2023.3 or newer with JCEF enabled
+(the default for the bundled JetBrains Runtime):
+IntelliJ IDEA, PyCharm, WebStorm, GoLand, RubyMine, CLion, Rider, PhpStorm, DataGrip, Android Studio.</p>
+
+<h3>Links</h3>
+<ul>
+  <li><a href="https://github.com/slothlabsorg/mermaid-preview-plugin">Source on GitHub</a></li>
+  <li><a href="https://github.com/slothlabsorg/mermaid-preview-plugin/issues">Issue tracker</a></li>
+  <li><a href="https://github.com/slothlabsorg/mermaid-preview-plugin/blob/main/docs/demo-diagrams.md">Demo file with 12 sample diagrams</a></li>
+</ul>
+
+<p><i>Made by <b>SlothLabs</b> — part of the CloudOrbit / DataOrbit / BastionOrbit / ProxyOrbit / WattsOrbit family.</i></p>
     ]]></description>
+
+    <change-notes><![CDATA[
+<h3>0.1.2 — May 2026</h3>
+<ul>
+  <li>First JetBrains Marketplace release.</li>
+  <li>Longer description, plugin icon, change-notes metadata.</li>
+</ul>
+
+<h3>0.1.1 — May 2026</h3>
+<ul>
+  <li><b>New:</b> per-block <b>SVG</b> / <b>PNG</b> / <b>Copy source</b> actions in the card header.</li>
+  <li><b>New:</b> actionable error overlay — shows mermaid parser message and highlights the offending line, no more generic bomb icon.</li>
+  <li>Rebundled resources are re-extracted on every IDE launch for faster dev loop.</li>
+</ul>
+
+<h3>0.1.0 — May 2026</h3>
+<ul>
+  <li>Initial release — tool window, per-block toggle Diagram ↔ Code, debounced live refresh, bundled mermaid 10.9.3.</li>
+</ul>
+    ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>org.intellij.plugins.markdown</depends>
