@@ -61,6 +61,10 @@
     padding: 8px 12px;
     background: var(--surface-hi);
     border-bottom: 1px solid var(--border);
+    transition: background 0.1s;
+  }
+  .card-header:hover {
+    background: var(--border);
   }
   .card-title {
     font-family: var(--mono);
@@ -196,7 +200,8 @@
   let currentBlocks = [];
   const viewState = new Map(); // blockIndex -> 'diagram' | 'code'
 
-  window.setPayload = function(payload) {
+  window.setPayload = async function(payload) {
+    const savedScroll = window.scrollY;
     const status = document.getElementById("status");
     const container = document.getElementById("blocks");
     container.innerHTML = "";
@@ -215,11 +220,18 @@
       : `<strong>${escapeHtml(payload.fileName)}</strong> — ${n} mermaid block${n === 1 ? "" : "s"}.`;
 
     currentBlocks = payload.blocks;
+    const renderPromises = [];
     for (const block of payload.blocks) {
-      container.appendChild(renderCard(block));
+      const { card, rendered } = renderCard(block);
+      container.appendChild(card);
+      renderPromises.push(rendered);
     }
+    await Promise.allSettled(renderPromises);
+    // Restore scroll after all async renders complete
+    requestAnimationFrame(() => window.scrollTo({ top: savedScroll, behavior: "instant" }));
   };
 
+  // Returns { card, rendered: Promise } so setPayload can await all renders for scroll restore.
   function renderCard(block) {
     const card = document.createElement("div");
     card.className = "card";
@@ -228,7 +240,7 @@
     const view = viewState.get(block.index) || "diagram";
 
     card.innerHTML = `
-      <div class="card-header">
+      <div class="card-header" title="Click to jump to line ${block.startLine} in the editor" style="cursor:pointer;">
         <div class="card-title">Block <strong>#${block.index + 1}</strong> · line ${block.startLine}</div>
         <div style="display:flex;align-items:center;">
           <div class="toggle">
@@ -245,6 +257,12 @@
       <div class="card-body ${view}"></div>
     `;
 
+    // Click-to-jump: click header (but not buttons) to navigate the IDE to this block's line
+    card.querySelector(".card-header").addEventListener("click", e => {
+      if (e.target.closest("button")) return;
+      if (typeof window._navigateToIde === "function") window._navigateToIde(block.index);
+    });
+
     for (const btn of card.querySelectorAll(".toggle button")) {
       btn.addEventListener("click", () => {
         const next = btn.dataset.view;
@@ -260,8 +278,8 @@
       btn.addEventListener("click", () => onExport(card, block, btn));
     }
 
-    drawBody(card.querySelector(".card-body"), block, view);
-    return card;
+    const rendered = drawBody(card.querySelector(".card-body"), block, view);
+    return { card, rendered };
   }
 
   async function onExport(card, block, btn) {
@@ -350,6 +368,7 @@
     setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 1200);
   }
 
+  // Returns a Promise that resolves when the body is fully rendered (for scroll-restore).
   async function drawBody(bodyEl, block, view) {
     bodyEl.innerHTML = "";
     const parseError = await parseError_(block.code);
@@ -366,6 +385,10 @@
       try {
         const { svg } = await mermaid.render(id, block.code);
         bodyEl.innerHTML = svg;
+        // Send SVG to Kotlin cache for inline inlays
+        if (typeof window._captureSvg === "function") {
+          window._captureSvg(`${block.index}|${svg}`);
+        }
       } catch (err) {
         renderErrorWithSource(bodyEl, block, err);
       }

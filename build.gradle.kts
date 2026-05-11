@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "org.slothlabs"
-version = "0.1.2"
+version = "0.2.0"
 
 repositories {
     mavenCentral()
@@ -23,6 +23,12 @@ dependencies {
         instrumentationTools()
         pluginVerifier()
     }
+    testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 intellijPlatform {

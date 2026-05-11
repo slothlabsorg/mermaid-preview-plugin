@@ -28,6 +28,6 @@ class MermaidResourceManager {
     }
 
     companion object {
-        const val VERSION = "0.1.2"
+        const val VERSION = "0.2.0"
     }
 }

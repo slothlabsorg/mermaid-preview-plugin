@@ -75,18 +75,15 @@ Status legend: `[ ]` = open · `[~]` = in progress · `[x]` = done in `main`.
 - [x] Actionable error overlay (highlights offending line, shows mermaid parser message)
 - [x] Screenshots in the README
 
-### v0.2 — quality of life (next)
+### v0.2 + v0.3 — editor integration 🚀 (just shipped)
 
-- [ ] Click on the card header to jump to that line in the editor
-- [ ] Unit tests for `MermaidBlockExtractor` (happy, nested, mismatched-fence, CRLF)
-- [ ] Preserve scroll position across refreshes
-- [ ] Short demo GIF in the README
-
-### v0.3 — editor integration
-
-- [ ] Inline editor inlays: render diagrams in-place below fenced blocks inside the Markdown editor (not just in the side panel)
-- [ ] "Open in Mermaid Preview" gutter action next to fenced blocks
-- [ ] Support `mmd` and `.mermaid` standalone files
+- [x] Click on the card header to jump to that line in the editor (JBCefJSQuery ↔ OpenFileDescriptor)
+- [x] Unit tests for `MermaidBlockExtractor` (happy path, multiple blocks, tilde fence, CRLF, unclosed)
+- [x] Preserve scroll position across refreshes (await all renders then `scrollTo`)
+- [x] Inline editor inlays: rendered SVG appears below each closing fence via `InlayModel.addBlockElement`
+- [x] Gutter icon on every ` ```mermaid ` fence — click to focus Mermaid Preview tool window
+- [x] Standalone `.mmd` / `.mermaid` files treated as a single diagram block
+- [x] Project-level `MermaidSvgCache` — tool window pushes SVG per block for inlay consumption
 
 ### v0.4 — richer web view
 
