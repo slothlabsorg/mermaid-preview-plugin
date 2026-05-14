@@ -198,7 +198,9 @@
   });
 
   let currentBlocks = [];
-  const viewState = new Map(); // blockIndex -> 'diagram' | 'code'
+  const viewState = new Map();
+  window.__svgs = {};  // base64url-encoded SVG per block index (for Kotlin download)
+  window.__pngs = {};  // data URL PNG per block index (for Kotlin download)
 
   window.setPayload = async function(payload) {
     const savedScroll = window.scrollY;
@@ -257,10 +259,10 @@
       <div class="card-body ${view}"></div>
     `;
 
-    // Click-to-jump: click header (but not buttons) to navigate the IDE to this block's line
+    // Click-to-jump: change document.title — Kotlin's CefDisplayHandler intercepts it.
     card.querySelector(".card-header").addEventListener("click", e => {
       if (e.target.closest("button")) return;
-      if (typeof window._navigateToIde === "function") window._navigateToIde(block.index);
+      document.title = "mermaid://navigate/" + block.index + "/" + Date.now();
     });
 
     for (const btn of card.querySelectorAll(".toggle button")) {
@@ -285,76 +287,50 @@
   async function onExport(card, block, btn) {
     const kind = btn.dataset.export;
     if (kind === "copy") {
-      try {
-        await navigator.clipboard.writeText(block.code);
-        flash(btn, "Copied!");
-      } catch (e) {
-        flash(btn, "Failed");
-      }
+      try { await navigator.clipboard.writeText(block.code); flash(btn, "Copied!"); }
+      catch (e) { flash(btn, "Failed"); }
       return;
     }
-
-    // Need an SVG — render off-screen if current view is Code / has parseError
-    const svgString = await renderSvgForExport(block);
-    if (!svgString) {
-      flash(btn, "Fix errors");
-      return;
-    }
-
     const safeName = `block-${block.index + 1}-line-${block.startLine}`;
-    if (kind === "svg") {
-      downloadBlob(new Blob([svgString], { type: "image/svg+xml" }), `${safeName}.svg`);
-      flash(btn, "SVG ↓");
-    } else if (kind === "png") {
-      const png = await svgToPng(svgString);
-      if (png) {
-        downloadBlob(png, `${safeName}.png`);
-        flash(btn, "PNG ↓");
-      } else {
-        flash(btn, "PNG failed");
-      }
+    if (kind === "svg" || kind === "png") {
+      // Signal Kotlin via title — Kotlin replies by reading the stored __svgs/__pngs.
+      document.title = `mermaid://download/${kind}/${block.index}/${safeName}.${kind}`;
+      flash(btn, kind.toUpperCase() + " ↓");
     }
   }
 
-  async function renderSvgForExport(block) {
+
+  function getSvgSize(svgString) {
     try {
-      await mermaid.parse(block.code);
-    } catch (e) { return null; }
-    try {
-      const id = `export-${Date.now()}-${block.index}`;
-      const { svg } = await mermaid.render(id, block.code);
-      return svg;
-    } catch (e) { return null; }
+      const doc = new DOMParser().parseFromString(svgString, "image/svg+xml");
+      const el = doc.querySelector("svg");
+      if (!el) return { w: 800, h: 600 };
+      const vb = el.getAttribute("viewBox");
+      if (vb) {
+        const p = vb.trim().split(/[\s,]+/).map(Number);
+        if (p.length >= 4) return { w: Math.ceil(p[2]) || 800, h: Math.ceil(p[3]) || 600 };
+      }
+      return { w: parseFloat(el.getAttribute("width")) || 800, h: parseFloat(el.getAttribute("height")) || 600 };
+    } catch { return { w: 800, h: 600 }; }
   }
 
-  function downloadBlob(blob, filename) {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-
-  function svgToPng(svgString) {
+  function svgToPngDataUrl(svgString, scale = 2) {
     return new Promise(resolve => {
       const img = new Image();
       const svgBlob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
       const url = URL.createObjectURL(svgBlob);
       img.onload = () => {
-        const scale = 2; // 2x for crispness
+        const { w, h } = getSvgSize(svgString);
         const canvas = document.createElement("canvas");
-        canvas.width = (img.width || 800) * scale;
-        canvas.height = (img.height || 600) * scale;
+        canvas.width = w * scale;
+        canvas.height = h * scale;
         const ctx = canvas.getContext("2d");
         ctx.fillStyle = getComputedStyle(document.body).backgroundColor || "white";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.setTransform(scale, 0, 0, scale, 0, 0);
-        ctx.drawImage(img, 0, 0);
+        ctx.drawImage(img, 0, 0, w, h);
         URL.revokeObjectURL(url);
-        canvas.toBlob(b => resolve(b), "image/png");
+        resolve(canvas.toDataURL("image/png"));
       };
       img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
       img.src = url;
@@ -368,7 +344,6 @@
     setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 1200);
   }
 
-  // Returns a Promise that resolves when the body is fully rendered (for scroll-restore).
   async function drawBody(bodyEl, block, view) {
     bodyEl.innerHTML = "";
     const parseError = await parseError_(block.code);
@@ -385,14 +360,26 @@
       try {
         const { svg } = await mermaid.render(id, block.code);
         bodyEl.innerHTML = svg;
-        // Send SVG to Kotlin cache for inline inlays
-        if (typeof window._captureSvg === "function") {
-          window._captureSvg(`${block.index}|${svg}`);
-        }
+
+        // Store for Kotlin downloads (title channel)
+        const b64svg = b64url(svg);
+        window.__svgs[block.index] = b64svg;
+        // Notify Kotlin's SVG cache for inlay manager
+        document.title = "mermaid://svgcache/" + block.index + "/" + b64svg;
+
+        // Pre-compute PNG at 1x to keep base64 size manageable
+        svgToPngDataUrl(svg, 1).then(dataUrl => {
+          if (dataUrl) window.__pngs[block.index] = dataUrl;
+        });
       } catch (err) {
         renderErrorWithSource(bodyEl, block, err);
       }
     }
+  }
+
+  function b64url(str) {
+    return btoa(unescape(encodeURIComponent(str)))
+      .replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
   }
 
   async function parseError_(code) {

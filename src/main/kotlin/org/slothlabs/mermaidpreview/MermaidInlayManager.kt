@@ -2,7 +2,6 @@ package org.slothlabs.mermaidpreview
 
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.components.service
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorCustomElementRenderer
 import com.intellij.openapi.editor.Inlay
@@ -13,55 +12,36 @@ import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.util.ui.ImageUtil
-import java.awt.Dimension
+import com.intellij.ui.JBColor
+import java.awt.Color
+import java.awt.Font
 import java.awt.Graphics
-import java.awt.image.BufferedImage
-import java.io.ByteArrayInputStream
-import javax.imageio.ImageIO
+import java.awt.Graphics2D
+import java.awt.RenderingHints
 import javax.swing.SwingUtilities
 
 /**
- * Listens for editors opening .md/.mmd files and injects SVG previews as block inlays
- * below the closing ``` fence of each mermaid block.
- *
- * The SVG comes from MermaidSvgCache, which is populated by the tool window.
- * Inlays appear once the tool window has rendered the corresponding block.
+ * Adds a compact badge below each closing mermaid fence in the editor.
+ * Does NOT depend on the SVG cache — shows for any block found in the file.
  */
 class MermaidInlayManager(private val project: Project) : EditorFactoryListener, Disposable {
 
-    /** Tracks which inlays are active per editor so we can remove stale ones. */
     private val editorInlays = HashMap<Editor, MutableList<Inlay<*>>>()
-
-    private val cacheListener: () -> Unit = {
-        SwingUtilities.invokeLater { refreshAllEditors() }
-    }
-
-    init {
-        project.service<MermaidSvgCache>().addListener(cacheListener)
-    }
 
     override fun editorCreated(event: EditorFactoryEvent) {
         val editor = event.editor
         if (editor.project != project) return
         val file = fileFor(editor) ?: return
         if (!isSupportedFile(file)) return
-        refreshEditor(editor, file)
+        ApplicationManager.getApplication().invokeLater { addInlays(editor, file) }
     }
 
     override fun editorReleased(event: EditorFactoryEvent) {
         editorInlays.remove(event.editor)?.forEach { Disposer.dispose(it) }
     }
 
-    private fun refreshAllEditors() {
-        editorInlays.keys.toList().forEach { editor ->
-            val file = fileFor(editor) ?: return@forEach
-            refreshEditor(editor, file)
-        }
-    }
-
-    private fun refreshEditor(editor: Editor, file: VirtualFile) {
-        val cache = project.service<MermaidSvgCache>()
+    private fun addInlays(editor: Editor, file: VirtualFile) {
+        if (editor.isDisposed) return
         val document = editor.document
         val text = ApplicationManager.getApplication().runReadAction<String> { document.text }
         val blocks = when {
@@ -69,90 +49,70 @@ class MermaidInlayManager(private val project: Project) : EditorFactoryListener,
             else -> MermaidBlockExtractor.extract(text)
         }
 
-        // Remove existing inlays for this editor
         editorInlays[editor]?.forEach { Disposer.dispose(it) }
         editorInlays[editor] = mutableListOf()
 
         for (block in blocks) {
-            val svg = cache.get(file.path, block.index) ?: continue
-            val image = svgToImage(svg) ?: continue
-
-            // Offset of the line AFTER the closing fence (startLine + block line count + 2 for fences)
-            val targetLine = closingFenceLine(text, block) ?: continue
-            if (targetLine >= document.lineCount) continue
-            val offset = document.getLineEndOffset(targetLine)
-
-            ApplicationManager.getApplication().invokeLater {
-                if (editor.isDisposed) return@invokeLater
-                val inlay = editor.inlayModel.addBlockElement(
-                    offset,
-                    true,
-                    false,
-                    10,
-                    SvgInlayRenderer(image),
-                ) ?: return@invokeLater
-                editorInlays.getOrPut(editor) { mutableListOf() }.add(inlay)
-            }
+            val closingLine = closingFenceLine(text, block) ?: continue
+            if (closingLine >= document.lineCount) continue
+            val offset = document.getLineEndOffset(closingLine)
+            val inlay = editor.inlayModel.addBlockElement(offset, true, false, 5, BadgeRenderer()) ?: continue
+            editorInlays.getOrPut(editor) { mutableListOf() }.add(inlay)
         }
     }
 
-    /** Finds the 0-based line index of the closing ``` fence for this block. */
     private fun closingFenceLine(text: String, block: MermaidBlock): Int? {
         val lines = text.lines()
-        // startLine is 1-based, the opening fence is on that line.
-        // Scan forward to find the matching closing fence.
         val openLine = block.startLine - 1
         if (openLine >= lines.size) return null
-        val fenceMarker = lines[openLine].trimStart().takeWhile { it == '`' || it == '~' }
+        val fenceChar = lines[openLine].trimStart().firstOrNull()?.takeIf { it == '`' || it == '~' } ?: return null
+        val fenceMarker = lines[openLine].trimStart().takeWhile { it == fenceChar }
         for (i in (openLine + 1) until lines.size) {
-            val trimmed = lines[i].trim()
-            if (trimmed == fenceMarker || trimmed.startsWith(fenceMarker) && trimmed.all { it == fenceMarker[0] }) {
-                return i
-            }
+            val t = lines[i].trim()
+            if (t == fenceMarker || (t.length >= fenceMarker.length && t.all { it == fenceChar })) return i
         }
         return null
     }
 
-    private fun svgToImage(svg: String): BufferedImage? {
-        return try {
-            // IntelliJ's SVGLoader handles most SVG; fall back to ImageIO for simple ones.
-            val bytes = svg.toByteArray(Charsets.UTF_8)
-            val loader = Class.forName("com.intellij.util.SVGLoader")
-            val method = loader.getMethod("load", java.io.InputStream::class.java, Float::class.javaPrimitiveType)
-            val img = method.invoke(null, ByteArrayInputStream(bytes), 1.5f) as? java.awt.Image
-            img?.let { ImageUtil.toBufferedImage(it) }
-        } catch (_: Exception) {
-            // SVGLoader not available — try ImageIO (won't work for SVG but graceful fallback)
-            null
-        }
-    }
-
-    private fun fileFor(editor: Editor) =
-        FileDocumentManager.getInstance().getFile(editor.document)
-
-    private fun isSupportedFile(file: VirtualFile) =
-        file.extension?.lowercase() in setOf("md", "markdown", "mdx", "mmd", "mermaid")
-
-    private fun isStandaloneMermaid(file: VirtualFile) =
-        file.extension?.lowercase() in setOf("mmd", "mermaid")
+    private fun fileFor(editor: Editor): VirtualFile? = FileDocumentManager.getInstance().getFile(editor.document)
+    private fun isSupportedFile(f: VirtualFile) = f.extension?.lowercase() in setOf("md", "markdown", "mdx", "mmd", "mermaid")
+    private fun isStandaloneMermaid(f: VirtualFile) = f.extension?.lowercase() in setOf("mmd", "mermaid")
 
     override fun dispose() {
-        project.service<MermaidSvgCache>().removeListener(cacheListener)
         editorInlays.values.flatten().forEach { Disposer.dispose(it) }
         editorInlays.clear()
     }
 }
 
-private class SvgInlayRenderer(private val image: BufferedImage) : EditorCustomElementRenderer {
-    private val maxWidth = 800
-    private val scale get() = minOf(1f, maxWidth.toFloat() / image.width)
-    private val w get() = (image.width * scale).toInt()
-    private val h get() = (image.height * scale).toInt()
+private class BadgeRenderer : EditorCustomElementRenderer {
+    private val bg = JBColor(Color(0xE0, 0xF0, 0xFF), Color(0x1A, 0x2A, 0x3A))
+    private val border = JBColor(Color(0x99, 0xCC, 0xFF), Color(0x33, 0x66, 0x99))
+    private val fg = JBColor(Color(0x00, 0x66, 0xCC), Color(0x66, 0xCC, 0xFF))
+    private val coral = JBColor(Color(0xFF, 0x36, 0x70), Color(0xFF, 0x70, 0x90))
 
-    override fun calcWidthInPixels(inlay: Inlay<*>) = w
-    override fun calcHeightInPixels(inlay: Inlay<*>) = h + 8
+    override fun calcWidthInPixels(inlay: Inlay<*>) = 260
+    override fun calcHeightInPixels(inlay: Inlay<*>) = 20
 
-    override fun paint(inlay: Inlay<*>, g: Graphics, targetRegion: java.awt.Rectangle, textAttributes: TextAttributes) {
-        g.drawImage(image, targetRegion.x + 8, targetRegion.y + 4, w, h, null)
+    override fun paint(inlay: Inlay<*>, g: Graphics, region: java.awt.Rectangle, attrs: TextAttributes) {
+        val g2 = (g as Graphics2D).create() as Graphics2D
+        try {
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            val rx = region.x + 2; val ry = region.y + 1
+            val rw = calcWidthInPixels(inlay) - 4; val rh = 18
+
+            g2.color = bg; g2.fillRoundRect(rx, ry, rw, rh, 6, 6)
+            g2.color = border; g2.drawRoundRect(rx, ry, rw, rh, 6, 6)
+
+            // Mini icon (2 nodes + arrow)
+            g2.color = coral
+            g2.fillRoundRect(rx + 4, ry + 4, 5, 3, 1, 1)
+            g2.fillRoundRect(rx + 12, ry + 11, 5, 3, 1, 1)
+            g2.drawLine(rx + 9, ry + 6, rx + 13, ry + 11)
+            g2.fillPolygon(intArrayOf(rx + 11, rx + 14, rx + 12), intArrayOf(ry + 10, ry + 10, ry + 13), 3)
+
+            g2.color = fg
+            g2.font = g2.font.deriveFont(Font.PLAIN, 10.5f)
+            g2.drawString("mermaid diagram — see Mermaid Preview panel", rx + 20, ry + rh - 4)
+        } finally { g2.dispose() }
     }
 }

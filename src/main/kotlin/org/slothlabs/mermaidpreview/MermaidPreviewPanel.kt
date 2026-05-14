@@ -7,6 +7,8 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
+import com.intellij.openapi.fileChooser.FileChooserFactory
+import com.intellij.openapi.fileChooser.FileSaverDescriptor
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorManagerEvent
@@ -17,10 +19,10 @@ import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.jcef.JBCefApp
 import com.intellij.ui.jcef.JBCefBrowser
-import com.intellij.ui.jcef.JBCefJSQuery
 import com.intellij.util.Alarm
 import com.intellij.util.messages.MessageBusConnection
 import java.awt.BorderLayout
+import java.util.Base64
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.SwingConstants
@@ -35,50 +37,20 @@ class MermaidPreviewPanel(private val project: Project) : JPanel(BorderLayout())
     private var currentDocument: Document? = null
     private var currentBlocks: List<MermaidBlock> = emptyList()
     private var currentFile: VirtualFile? = null
+    // Pending export: (filename, ext, isPng) — set when a download is requested,
+    // consumed when the SVG/PNG data arrives back via title change.
+    private var pendingExport: Triple<String, String, Boolean>? = null
     private val connection: MessageBusConnection = project.messageBus.connect(this)
 
-    // JBCefJSQuery lets JS call back into Kotlin — used for click-to-jump.
-    private val navigateQuery: JBCefJSQuery? = browser?.let { b ->
-        JBCefJSQuery.create(b as com.intellij.ui.jcef.JBCefBrowserBase).also { q ->
-            q.addHandler { indexStr ->
-                val idx = indexStr.trim().toIntOrNull() ?: return@addHandler null
-                val block = currentBlocks.getOrNull(idx) ?: return@addHandler null
-                val file = currentFile ?: return@addHandler null
-                ApplicationManager.getApplication().invokeLater {
-                    OpenFileDescriptor(project, file, block.startLine - 1, 0).navigate(true)
-                }
-                null
-            }
-        }
-    }
-
-    // JBCefJSQuery to receive rendered SVG strings from the webview for the inlay cache.
-    private val svgCaptureQuery: JBCefJSQuery? = browser?.let { b ->
-        JBCefJSQuery.create(b as com.intellij.ui.jcef.JBCefBrowserBase).also { q ->
-            q.addHandler { payload ->
-                // payload = "<blockIndex>|<svgContent>"
-                val sep = payload.indexOf('|')
-                if (sep < 0) return@addHandler null
-                val idx = payload.substring(0, sep).toIntOrNull() ?: return@addHandler null
-                val svg = payload.substring(sep + 1)
-                val file = currentFile ?: return@addHandler null
-                service<MermaidSvgCache>().put(file.path, idx, svg)
-                null
-            }
-        }
-    }
-
     private val documentListener = object : DocumentListener {
-        override fun documentChanged(event: DocumentEvent) {
-            scheduleRefresh()
-        }
+        override fun documentChanged(event: DocumentEvent) { scheduleRefresh() }
     }
 
     init {
         if (browser == null) {
             add(
                 JLabel(
-                    "<html>JCEF is disabled in this IDE. Enable it via Help → Find Action → " +
+                    "<html>JCEF is disabled. Enable it via Help → Find Action → " +
                         "'Choose Boot Runtime for the IDE' → pick a JBR with JCEF.</html>",
                     SwingConstants.CENTER,
                 ),
@@ -86,8 +58,17 @@ class MermaidPreviewPanel(private val project: Project) : JPanel(BorderLayout())
             )
         } else {
             Disposer.register(this, browser)
-            navigateQuery?.let { Disposer.register(this, it) }
-            svgCaptureQuery?.let { Disposer.register(this, it) }
+
+            // ── Title-based communication channel (reliable, no JBCefJSQuery) ──────
+            // JS sets document.title = "mermaid://<action>/..." to signal Kotlin.
+            browser.jbCefClient.addDisplayHandler(
+                object : org.cef.handler.CefDisplayHandlerAdapter() {
+                    override fun onTitleChange(b: org.cef.browser.CefBrowser?, title: String?) {
+                        handleTitle(b ?: return, title ?: return)
+                    }
+                },
+                browser.cefBrowser,
+            )
 
             browser.jbCefClient.addLoadHandler(
                 object : org.cef.handler.CefLoadHandlerAdapter() {
@@ -96,7 +77,6 @@ class MermaidPreviewPanel(private val project: Project) : JPanel(BorderLayout())
                         f: org.cef.browser.CefFrame?,
                         httpStatusCode: Int,
                     ) {
-                        injectCallbacks()
                         browserReady = true
                         pendingPayload?.let { pushToBrowser(it) }
                         pendingPayload = null
@@ -121,20 +101,74 @@ class MermaidPreviewPanel(private val project: Project) : JPanel(BorderLayout())
         }
     }
 
-    /** Injects Kotlin←→JS callback functions after the page loads. */
-    private fun injectCallbacks() {
-        val b = browser ?: return
-        val navJs = navigateQuery?.inject("index") ?: "/* nav unavailable */"
-        val svgJs = svgCaptureQuery?.inject("payload") ?: "/* svg unavailable */"
-        b.cefBrowser.executeJavaScript(
-            """
-            window._navigateToIde = function(index) { $navJs };
-            window._captureSvg    = function(payload) { $svgJs };
-            """.trimIndent(),
-            b.cefBrowser.url,
-            0,
-        )
+    // ── Title-change protocol ──────────────────────────────────────────────────
+    private fun handleTitle(cefBrowser: org.cef.browser.CefBrowser, title: String) {
+        when {
+            // mermaid://navigate/<blockIndex>/<timestamp>
+            title.startsWith("mermaid://navigate/") -> {
+                val idx = title.removePrefix("mermaid://navigate/")
+                    .split("/").getOrNull(0)?.toIntOrNull() ?: return
+                val block = currentBlocks.getOrNull(idx) ?: return
+                val file = currentFile ?: return
+                ApplicationManager.getApplication().invokeLater {
+                    OpenFileDescriptor(project, file, block.startLine - 1, 0).navigate(true)
+                }
+            }
+
+            // mermaid://download/<ext>/<blockIndex>/<safeFilename>
+            // → Kotlin asks JS to send back the stored SVG/PNG via the data channel.
+            title.startsWith("mermaid://download/") -> {
+                val parts = title.removePrefix("mermaid://download/").split("/")
+                val ext = parts.getOrNull(0) ?: return
+                val idx = parts.getOrNull(1)?.toIntOrNull() ?: return
+                val filename = "${parts.drop(2).joinToString("/")}"
+                pendingExport = Triple(filename, ext, ext == "png")
+                val jsVar = if (ext == "png") "window.__pngs[$idx]" else "window.__svgs[$idx]"
+                cefBrowser.executeJavaScript(
+                    "var _d=$jsVar; document.title=_d?('mermaid://data/'+_d):'mermaid://data/null';",
+                    cefBrowser.url, 0,
+                )
+            }
+
+            // mermaid://data/<base64urlOrDataUrl>
+            // → Kotlin receives the content and shows the save dialog.
+            title.startsWith("mermaid://data/") -> {
+                val raw = title.removePrefix("mermaid://data/")
+                val (filename, ext, isPng) = pendingExport ?: return
+                pendingExport = null
+                if (raw == "null" || raw.isEmpty()) return
+                val bytes = try {
+                    if (isPng) Base64.getDecoder().decode(raw.substringAfter("base64,"))
+                    else Base64.getDecoder().decode(raw.replace('-', '+').replace('_', '/').let {
+                        when (it.length % 4) { 2 -> "$it=="; 3 -> "$it=" else -> it }
+                    })
+                } catch (_: Exception) { return }
+                ApplicationManager.getApplication().invokeLater {
+                    val descriptor = FileSaverDescriptor("Save Diagram", "", ext)
+                    val dialog = FileChooserFactory.getInstance().createSaveFileDialog(descriptor, project)
+                    dialog.save(null as VirtualFile?, filename)?.let { wrapper ->
+                        val vf = wrapper.getVirtualFile(true) ?: return@invokeLater
+                        ApplicationManager.getApplication().runWriteAction { vf.setBinaryContent(bytes) }
+                    }
+                }
+            }
+
+            // mermaid://svgcache/<blockIndex>/<base64urlSvg>
+            // → Populate SVG cache for inline inlays.
+            title.startsWith("mermaid://svgcache/") -> {
+                val parts = title.removePrefix("mermaid://svgcache/").split("/", limit = 2)
+                val idx = parts.getOrNull(0)?.toIntOrNull() ?: return
+                val b64 = parts.getOrNull(1) ?: return
+                val svg = try {
+                    String(Base64.getDecoder().decode(b64.replace('-', '+').replace('_', '/')))
+                } catch (_: Exception) { return }
+                val file = currentFile ?: return
+                service<MermaidSvgCache>().put(file.path, idx, svg)
+            }
+        }
     }
+
+    // ── File management ────────────────────────────────────────────────────────
 
     fun updateFor(file: VirtualFile?) {
         detachDocumentListener()
@@ -177,7 +211,6 @@ class MermaidPreviewPanel(private val project: Project) : JPanel(BorderLayout())
         }
         val document = FileDocumentManager.getInstance().getDocument(file) ?: return
         val text = ApplicationManager.getApplication().runReadAction<String> { document.text }
-
         val blocks = when {
             isStandaloneMermaid(file) -> listOf(MermaidBlock(index = 0, startLine = 1, code = text.trim()))
             else -> MermaidBlockExtractor.extract(text)
@@ -193,37 +226,18 @@ class MermaidPreviewPanel(private val project: Project) : JPanel(BorderLayout())
 
     private fun pushToBrowser(json: String) {
         val b = browser ?: return
-        val escaped = json
-            .replace("\\", "\\\\")
-            .replace("'", "\\'")
-            .replace("\n", "\\n")
-            .replace("\r", "")
+        val escaped = json.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "")
         b.cefBrowser.executeJavaScript(
             "window.setPayload && window.setPayload(JSON.parse('$escaped'));",
-            b.cefBrowser.url,
-            0,
+            b.cefBrowser.url, 0,
         )
     }
 
-    private fun isSupportedFile(file: VirtualFile) = isMarkdown(file) || isStandaloneMermaid(file)
+    private fun isSupportedFile(f: VirtualFile) = isMarkdown(f) || isStandaloneMermaid(f)
+    private fun isMarkdown(f: VirtualFile) = f.extension?.lowercase() in setOf("md", "markdown", "mdx")
+    private fun isStandaloneMermaid(f: VirtualFile) = f.extension?.lowercase() in setOf("mmd", "mermaid")
 
-    private fun isMarkdown(file: VirtualFile): Boolean {
-        val ext = file.extension?.lowercase() ?: return false
-        return ext in setOf("md", "markdown", "mdx")
-    }
+    override fun dispose() { detachDocumentListener() }
 
-    private fun isStandaloneMermaid(file: VirtualFile): Boolean {
-        val ext = file.extension?.lowercase() ?: return false
-        return ext in setOf("mmd", "mermaid")
-    }
-
-    override fun dispose() {
-        detachDocumentListener()
-    }
-
-    private data class Payload(
-        val status: String,
-        val fileName: String,
-        val blocks: List<MermaidBlock>,
-    )
+    private data class Payload(val status: String, val fileName: String, val blocks: List<MermaidBlock>)
 }
